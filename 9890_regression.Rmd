@@ -1,0 +1,428 @@
+---
+title: 'STA9890: Regression'
+author: "Jonathan Ng"
+output: pdf_document
+---
+
+```{r echo=FALSE}
+library(tidyverse)
+library(gridExtra)
+library(reshape2)
+library(stringr)
+library(FSA)
+library(ISLR)
+library(glmnet)
+library(randomForest)
+library(kableExtra)
+data <- read_csv("OnlineNewsPopularity.csv") %>%
+  select(-url, -timedelta)
+```
+
+# 1.  Mashable Online News Popularity 
+
+https://archive.ics.uci.edu/ml/datasets/Online+News+Popularity
+
+### (a) Describe the response variable and the predictors. How was the data collected?
+
+This dataset from *Mashable* summarizes sets of features about articles published on their website www.mashable.com. The goal is to predict response variable, the number of shares in social networks for a given article, which is an indicator of popularity.
+
+##### The Response Variable: `shares`
+
+```{r comment=NA}
+data %>% 
+  select(shares) %>%
+  glimpse()
+```
+
+&nbsp;
+
+##### The Predictor Variables:
+
+1. n_tokens_title: Number of words in the title
+2. n_tokens_content: Number of words in the content
+3. n_unique_tokens: Rate of unique words in the content
+4. n_non_stop_words: Rate of non-stop words in the content
+5. n_non_stop_unique_tokens: Rate of unique non-stop words in the content
+6. num_hrefs: Number of links
+7. num_self_hrefs: Number of links to other articles published by Mashable
+8. num_imgs: Number of images
+9. num_videos: Number of videos
+10. average_token_length: Average length of the words in the content
+11. num_keywords: Number of keywords in the metadata
+12. data_channel_is_lifestyle: Is data channel 'Lifestyle'?
+13. data_channel_is_elnettertainment: Is data channel 'Entertainment'?
+14. data_channel_is_bus: Is data channel 'Business'?
+15. data_channel_is_socmed: Is data channel 'Social Media'?
+16. data_channel_is_tech: Is data channel 'Tech'?
+17. data_channel_is_world: Is data channel 'World'?
+18. kw_min_min: Worst keyword (min. shares)
+19. kw_max_min: Worst keyword (max. shares)
+20. kw_avg_min: Worst keyword (avg. shares)
+21. kw_min_max: Best keyword (min. shares)
+22. kw_max_max: Best keyword (max. shares)
+23. kw_avg_max: Best keyword (avg. shares)
+24. kw_min_avg: Avg. keyword (min. shares)
+25. kw_max_avg: Avg. keyword (max. shares)
+26. kw_avg_avg: Avg. keyword (avg. shares)
+27. self_reference_min_shares: Min. shares of referenced articles in Mashable
+28. self_reference_max_shares: Max. shares of referenced articles in Mashable
+29. self_reference_avg_sharess: Avg. shares of referenced articles in Mashable
+30. weekday_is_monday: Was the article published on a Monday?
+31. weekday_is_tuesday: Was the article published on a Tuesday?
+32. weekday_is_wednesday: Was the article published on a Wednesday?
+33. weekday_is_thursday: Was the article published on a Thursday?
+34. weekday_is_friday: Was the article published on a Friday?
+35. weekday_is_saturday: Was the article published on a Saturday?
+36. weekday_is_sunday: Was the article published on a Sunday?
+37. is_weekend: Was the article published on the weekend?
+38. LDA_00: Closeness to LDA topic 0
+39. LDA_01: Closeness to LDA topic 1
+40. LDA_02: Closeness to LDA topic 2
+41. LDA_03: Closeness to LDA topic 3
+42. LDA_04: Closeness to LDA topic 4
+43. global_subjectivity: Text subjectivity
+44. global_sentiment_polarity: Text sentiment polarity
+45. global_rate_positive_words: Rate of positive words in the content
+46. global_rate_negative_words: Rate of negative words in the content
+47. rate_positive_words: Rate of positive words among non-neutral tokens
+48. rate_negative_words: Rate of negative words among non-neutral tokens
+49. avg_positive_polarity: Avg. polarity of positive words
+50. min_positive_polarity: Min. polarity of positive words
+51. max_positive_polarity: Max. polarity of positive words
+52. avg_negative_polarity: Avg. polarity of negative words
+53. min_negative_polarity: Min. polarity of negative words
+54. max_negative_polarity: Max. polarity of negative words
+55. title_subjectivity: Title subjectivity
+56. title_sentiment_polarity: Title polarity
+57. abs_title_subjectivity: Absolute subjectivity level
+58. abs_title_sentiment_polarity: Absolute polarity level
+
+&nbsp;
+
+```{r comment=NA}
+data %>%
+  select(-shares) %>%
+  glimpse()
+```
+
+&nbsp;
+
+The data was collected solely from articles published on www.mashable.com for a two year period. The data does not contain the actual content of articles, but rather various summary statistics and metadata extracted from the published articles.
+
+
+(b) Impute missing data-points with their mean. What is $n$ and $p$?
+
+The data does not contain missing values, so imputation is not required.
+$$n = 39644$$
+$$p = 58$$
+
+(c) Standardize the numerical predictors using equation (6.6) in the ISLR book.
+
+### Equation 6.6:
+$$
+\tilde x_{ij} = \frac{x_{ij}}{\sqrt{\frac{1}{n} \sum_{i=1}^n (x_{ij} - \bar x_j)^2}}
+$$
+
+```{r comment=NA}
+data <- data %>%
+  select(-shares) %>%
+  mutate_all(function(x) {(x - mean(x)) / sd(x)}) %>%
+  mutate(shares = data$shares)
+
+data %>%
+  glimpse()
+```
+
+3. For each $n_{train} = 0.8n$, repeat the following 100 times, do the following for the different models mentioned below.
+
+(a) Randomly split the dataset into two mutually exclusive datasets $D_{test}$ and $D_{train}$
+with size $n_{test}$ and $n_{train}$ such that $n_{train} + n_{test} = n$.
+
+(b) Use $D_{train}$ to fit lasso, elastic-net $\alpha$ = 0.5, ridge, and random forrests.
+
+(c) Tune the $\lambda$s using 10-fold CV.
+
+(d) For each estimated model calculate
+
+$$
+R_{test}^2 = 1 - \frac{\frac{1}{n_{test}} \sum_{i \in D_{test}} (y_i - \hat y_i)^2 }{\frac{1}{n} \sum_{i=1}^n (y_i - \bar y)^2}
+$$
+```{r}
+hist_y <- data %>%
+  ggplot(aes(x=shares))+
+  geom_histogram(bins = 30)
+
+hist_log_y <- data %>%
+  ggplot(aes(x=log(shares)))+
+  geom_histogram(bins = 30)
+
+grid.arrange(hist_y, hist_log_y, nrow=1)
+
+data <- data %>%
+  mutate(shares=log(shares))
+
+data %>%
+  glimpse()
+```
+
+```{r}
+n <- 39644
+p <- 59
+
+split_and_train <- function(plots=F) {
+  # (a)
+  n_train <- as.integer(0.8 * n)
+  n_test = n - n_train
+  train_inds <- sample.int(n, n_train)
+  D_train <- data[train_inds, ]
+  D_test <- data[-train_inds, ]
+  # (b) & (c)
+  X_train <- select(D_train, -shares) %>% data.matrix()
+  X_test <- select(D_test, -shares) %>% data.matrix()
+  y_train <- D_train$shares
+  y_test <- D_test$shares
+  y <- data$shares
+  # (d)
+  ## lasso
+  lasso_cv <- cv.glmnet(X_train, y_train, alpha = 1, nfolds = 10)
+  lasso_fit <- glmnet(X_train, y_train, alpha = 1, lambda = lasso_cv$lambda.min)
+  lasso_y_train_hat <- predict(lasso_fit, X_train)
+  lasso_y_test_hat <- predict(lasso_fit, X_test)
+  lasso_resid_train <- as.vector(y_train - lasso_y_train_hat)
+  lasso_resid_test <- y_test - lasso_y_test_hat
+  lasso_Rsq_train <- 1 - mean((lasso_resid_train)^2) / mean((y - mean(y))^2)
+  lasso_Rsq_test <- 1 - mean((lasso_resid_test)^2) / mean((y - mean(y))^2)
+  
+  ## ridge
+  ridge_cv <- cv.glmnet(X_train, y_train, alpha = 0, nfolds = 10)
+  ridge_fit <- glmnet(X_train, y_train, alpha = 0, lambda = ridge_cv$lambda.min)
+  ridge_y_train_hat <- predict(ridge_fit, X_train)
+  ridge_y_test_hat <- predict(ridge_fit, X_test)
+  ridge_resid_train <- as.vector(y_train - ridge_y_train_hat)
+  ridge_resid_test <- y_test - ridge_y_test_hat
+  ridge_Rsq_train <- 1 - mean((ridge_resid_train)^2) / mean((y - mean(y))^2)
+  ridge_Rsq_test <- 1 - mean((ridge_resid_test)^2) / mean((y - mean(y))^2)
+  
+  ## elastic-net
+  elnet_cv <- cv.glmnet(X_train, y_train, alpha = 0.5, nfolds = 10)
+  elnet_fit <- glmnet(X_train, y_train, alpha = 0.5, lambda = elnet_cv$lambda.min)
+  elnet_y_train_hat <- predict(elnet_fit, X_train)
+  elnet_y_test_hat <- predict(elnet_fit, X_test)
+  elnet_resid_train <- as.vector(y_train - elnet_y_train_hat)
+  elnet_resid_test <- y_test - elnet_y_test_hat
+  elnet_Rsq_train <- 1 - mean((elnet_resid_train)^2) / mean((y - mean(y))^2)
+  elnet_Rsq_test <- 1 - mean((elnet_resid_test)^2) / mean((y - mean(y))^2)
+
+  ## random forest
+  rf_fit <-randomForest(X_train, y_train, ntree=1, mtry = sqrt(p), importance = T)
+  rf_y_train_hat <- predict(rf_fit, X_train)
+  rf_y_test_hat <- predict(rf_fit, X_test)
+  rf_resid_train <- y_train - rf_y_train_hat
+  rf_resid_test <- y_test - rf_y_test_hat
+  rf_Rsq_train <- 1 - mean((rf_resid_train)^2) / mean((y - mean(y))^2)
+  rf_Rsq_test <- 1 - mean((rf_resid_test)^2) / mean((y - mean(y))^2)
+  
+  if(plots) {
+    ## 10 fold CV Plots
+    plot(lasso_cv, main = "Lasso")
+    plot(ridge_cv, main= "Ridge")
+    plot(elnet_cv, main = "Elastic Net")
+    ## Residuals Boxplots
+    resid_train <- data.frame(lasso_train = lasso_resid_train, 
+                              ridge_train = ridge_resid_train, 
+                              elnet_train = elnet_resid_train, 
+                              rf_train = rf_resid_train)
+    resid_test <- data.frame(lasso_test = lasso_resid_test, 
+                             ridge_test = ridge_resid_test, 
+                             elnet_test = elnet_Rsq_test, 
+                             rf_test = rf_resid_test)
+  }
+  
+  Rsq_train <- list(lasso_train = lasso_Rsq_train, 
+                    ridge_train = ridge_Rsq_train, 
+                    elnet_train = elnet_Rsq_train, 
+                    rf_train = rf_Rsq_train)
+  Rsq_test <- list(lasso_test = lasso_Rsq_test, 
+                   ridge_test = ridge_Rsq_test, 
+                   elnet_test = elnet_Rsq_test, 
+                   rf_test = rf_Rsq_test)
+  
+  return(list(Rsq_train, Rsq_test))
+}
+set.seed(1)
+Rsq_train_test <- split_and_train(plots = T)
+Rsq_train_test %>%
+  data.frame()
+```
+
+```{r}
+set.seed(1)
+M = 2
+Rsqs_models <- replicate(M, unlist(split_and_train(plots = F))) %>% 
+  t() %>%
+  data.frame(row.names = 1:M)
+Rsqs_models %>%
+  headtail()
+
+Rsq_plot_data <- Rsqs_models %>%
+  melt() %>%
+  rename(Rsq = value, model=variable) %>%
+  mutate(model = as.character(model),
+         dataset = ifelse(model %>% endsWith("train"), "train", "test"),
+         model = model %>% str_remove("_train") %>% str_remove("_test"),
+         dataset = factor(dataset, levels=c("train", "test"))) %>%
+  select(dataset, model, Rsq)
+
+Rsq_plot_data %>%
+  headtail()
+
+Rsq_plot_data %>%
+  ggplot(aes(x = model, y = Rsq)) +
+  geom_boxplot(aes(fill = model)) +
+  facet_wrap(~ dataset,scales = "free_y") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Boxplots of R-Squared of Training and Testing Data on 100 Samples") +
+  labs(x = "Model", y = "R-Squared")
+```
+
+
+4. Create a presentation with less than 6 slides. Your objective is to be clear and concise.
+Hence I recommend the following:
+
+(a) a brief description of the nature of the data, shape, etc as discussed above. (1
+slide)
+
+(b) Show the side-by-side boxplots of $R^2_{test}$, $R^2_{train}$. (1 slide)
+
+(c) For one of the 100 samples, create 10-fold CV curves for lasso, elastic-net $\alpha$ = 0.5,
+ridge. (1 slide). (d) For one of the 100 samples, show the side-by-side boxplots of train and test
+residuals (1 slide). Comment on the distribution and size of the residuals.
+
+(e) Present bar-plots (with bootstrapped error bars) of the estimated coefficients, and
+the importance of the parameters. If you have something interesting to say about
+coefficients that are (or are not important) say it. (1 slide)
+
+```{r fig.width=80%}
+split_and_train_bs <- function() {
+  bs_inds <- sample(n, replace=T)
+  
+  X_bs <- data[bs_inds, ] %>% 
+    select(-shares) %>%
+    data.matrix()
+  y_bs <- data$shares[bs_inds]
+  
+  # bootstrap lasso
+  lasso_cv <- cv.glmnet(X_bs, y_bs, alpha = 1)
+  lasso_fit <- glmnet(X_bs, y_bs, alpha = 1, lambda = lasso_cv$lambda.min)  
+  beta_lasso_bs <- as.vector(lasso_fit$beta)
+  # bootstrap ridge
+  ridge_cv <- cv.glmnet(X_bs, y_bs, alpha = 0)
+  ridge_fit <- glmnet(X_bs, y_bs, alpha = 0, lambda = ridge_cv$lambda.min)  
+  beta_ridge_bs <- as.vector(ridge_fit$beta)
+  # bootstrap elastic-net
+  elnet_cv <- cv.glmnet(X_bs, y_bs, alpha = 0.5)
+  elnet_fit <- glmnet(X_bs, y_bs, alpha = 0.5, lambda = elnet_cv$lambda.min)  
+  beta_elnet_bs <- as.vector(elnet_fit$beta)
+  # bootstrap random forest
+  rf_fit <- randomForest(X_bs, y_bs,ntree = 1, mtry = sqrt(p), importance = TRUE)
+  beta_rf_bs <- as.vector(rf_fit$importance[,1])
+  
+  return(list(beta_lasso_bs=beta_lasso_bs, beta_ridge_bs=beta_ridge_bs, 
+              beta_elnet_bs=beta_elnet_bs, beta_rf_bs=beta_rf_bs))
+}
+
+bootstrapSamples = 2
+beta_models <- replicate(bootstrapSamples, split_and_train_bs())
+
+beta_lasso_bs <- do.call(rbind, beta_models[1,]) %>% data.matrix()
+beta_ridge_bs <- do.call(rbind, beta_models[2,]) %>% data.matrix() 
+beta_elnet_bs <- do.call(rbind, beta_models[3,]) %>% data.matrix()
+beta_rf_bs <- do.call(rbind, beta_models[4,]) %>% data.matrix()    
+
+# calculate bootstrapped standard errors 
+lasso_bs_sd  <- apply(beta_lasso_bs, 1, "sd")
+ridge_bs_sd  <- apply(beta_ridge_bs, 1, "sd")
+rf_bs_sd  <- apply(beta_rf_bs, 1, "sd")
+elnet_bs_sd  <- apply(beta_elnet_bs, 1, "sd")
+
+X <- data %>% select(-shares) %>% data.matrix()
+y <- data$shares
+
+# fit lasso to the whole data
+lasso_cv <- cv.glmnet(X, y, alpha = 1)
+lasso_fit <- glmnet(X, y, alpha = 0.5, lambda = lasso_cv$lambda.min)
+# fit ridge to the whole data
+ridge_cv <- cv.glmnet(X, y, alpha = 0)
+ridge_fit <- glmnet(X, y, alpha = 0.5, lambda = ridge_cv$lambda.min)
+# fit elnet to the whole data
+elnet_cv <- cv.glmnet(X, y, alpha = 0.5)
+elnet_fit <- glmnet(X, y, alpha = 0.5, lambda = elnet_cv$lambda.min)
+# fit rf to the whole data
+rf_fit <- randomForest(X, y, ntree = 1, mtry = sqrt(p), importance = TRUE)
+
+cols <- 1:length(names(X[1,])) %>% as.factor()
+
+betaS_lasso <- data.frame(feature = cols, 
+                          value = as.vector(lasso_fit$beta), 
+                          error = 2*lasso_bs_sd, 
+                          model = "elnet")
+betaS_ridge <- data.frame(feature = cols, 
+                          value = as.vector(ridge_fit$beta), 
+                          error = 2*ridge_bs_sd, 
+                          model = "elnet")
+betaS_rf <- data.frame(feature = cols, 
+                       value = as.vector(rf_fit$importance[,1]), 
+                       error = 2*rf_bs_sd, 
+                       model = "rf")
+betaS_elnet <- data.frame(feature = cols, 
+                          value = as.vector(elnet_fit$beta), 
+                          error = 2*elnet_bs_sd, 
+                          model = "elnet")
+
+
+betaS_models <- rbind(betaS_lasso, betaS_ridge, betaS_elnet, betaS_rf)
+
+betaS_models %>%
+  ggplot(aes(x=feature, y=value)) +
+  geom_bar(stat = "identity", fill="white", colour="black") +
+  geom_errorbar(aes(ymin=value-error, ymax=value+error), width=.2) +
+  facet_wrap(~ model, scales = "free_y", ncol = 1) 
+```
+
+```{r}
+rfPlot <- ggplot(betaS_rf, aes(x=feature, y=value)) +
+          geom_bar(stat = "identity", fill="white", colour="black")    +
+          geom_errorbar(aes(ymin=value-error, ymax=value+error), width=.2)
+
+enPlot <- ggplot(betaS_elnet, aes(x=feature, y=value)) +
+  geom_bar(stat = "identity", fill="white", colour="black")    +
+  geom_errorbar(aes(ymin=value-error, ymax=value+error), width=.2)
+
+grid.arrange(rfPlot, enPlot, nrow = 2)
+
+# Change the order of factor levels by specifying the order explicitly
+betaS_rf$feature <- factor(betaS_rf$feature, levels = betaS_rf$feature[order(betaS_rf$value, decreasing = TRUE)])
+betaS_elnet$feature <- factor(betaS_elnet$feature, levels = betaS_rf$feature[order(betaS_rf$value, decreasing = TRUE)])
+
+rfPlot <- ggplot(betaS_rf, aes(x=feature, y=value)) +
+  geom_bar(stat = "identity", fill="white", colour="black")    +
+  geom_errorbar(aes(ymin=value-error, ymax=value+error), width=.2)
+
+enPlot <- ggplot(betaS_elnet, aes(x=feature, y=value)) +
+  geom_bar(stat = "identity", fill="white", colour="black")    +
+  geom_errorbar(aes(ymin=value-error, ymax=value+error), width=.2)
+
+
+grid.arrange(rfPlot, enPlot, nrow = 2)
+```
+
+(f) Summary slide: summarize the performance and the time need to train each
+model in a table and comment on it. (1 slide)
+
+
+
+5. Upload a 5 minute video of your recorded voice and slides.
+
+
+
+
